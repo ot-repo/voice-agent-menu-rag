@@ -1,0 +1,17 @@
+name: Deployment
+
+on:
+  push:
+    branches:
+      - masterxxx
+      - stagingxxx
+      - developmentxxx
+
+jobs:
+  deploy:
+    permissions:
+      contents: read
+      id-token: write
+    name: Trigger
+    uses: ot-repo/shared-workflows/.github/workflows/golang.yaml@master
+    secrets: inherit
