@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -20,7 +21,6 @@ import (
 	"rag-ai/models"
 
 	"github.com/gofiber/fiber/v3/log"
-	"github.com/nats-io/nats.go"
 	"gorm.io/gorm"
 
 	"github.com/ollama/ollama/api"
@@ -44,7 +44,7 @@ func Addslashes(str string) string {
 	return buf.String()
 }
 
-func GetEmbeddingsVector(ctx context.Context, client *api.Client, doc string) ([]float64, error) {
+func GetOllamaEmbeddingsVector(ctx context.Context, client *api.Client, doc string) ([]float64, error) {
 
 	req := &ollama.EmbeddingRequest{
 		Model:     configs.OllamaEmbeddingsModel,
@@ -60,7 +60,64 @@ func GetEmbeddingsVector(ctx context.Context, client *api.Client, doc string) ([
 	return resp.Embedding, nil
 }
 
+func GetTEIEmbeddingsVector(inputText string) ([]float64, error) {
+	// 1. Construct the request payload
+	payload := models.TEIEmbeddingRequest{
+		Inputs: inputText,
+	}
+
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to marshal request payload: %w", err)
+	}
+
+	// The standard endpoint for TEI is /embed
+	url := configs.TeiApiUrl + "/embed"
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create HTTP request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to send request to TEI API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 4. Check for non-200 status codes
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("TEI service returned error status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// The /embed endpoint returns a JSON array of arrays of floats: [[...], [...]].
+	// Even for a single input, it returns a list containing one vector.
+	var embeddings [][]float64
+	if err := json.NewDecoder(resp.Body).Decode(&embeddings); err != nil {
+		return nil, fmt.Errorf("Failed to decode response JSON: %w", err)
+	}
+
+	// 6. Validate and return the result
+	if len(embeddings) == 0 {
+		return nil, fmt.Errorf("No embeddings returned in response")
+	}
+
+	// Return the first (and only) vector from the batch response
+	return embeddings[0], nil
+}
+
 func GenerateAllCustomerContentVectors(db *gorm.DB, customerId string) error {
+
+	var embeddingForContent []float64
+	var err error
+
+	ctx := context.Background()
+	ollamaApiUrl, _ := url.Parse(configs.OllamaApiUrl)
+	client := ollama.NewClient(ollamaApiUrl, http.DefaultClient)
+
+	counter := 1
 
 	type Content struct {
 		Id      int    `db:"id"`
@@ -68,20 +125,24 @@ func GenerateAllCustomerContentVectors(db *gorm.DB, customerId string) error {
 	}
 
 	log.Infof("Called GenerateAllCustomerContentVectors for customer: %s", customerId)
-	ctx := context.Background()
-	ollamaApiUrl, _ := url.Parse(configs.OllamaApiUrl)
-	client := ollama.NewClient(ollamaApiUrl, http.DefaultClient)
 
 	contents := []Content{}
 	db.Raw("SELECT id, content FROM menu_contents WHERE customer_id = ?", customerId).Scan(&contents)
 	for _, content := range contents {
-		embeddingForContent, err := GetEmbeddingsVector(ctx, client, content.Content)
+		log.Infof("Counter in GenerateAllCustomerContentVectors: %d", counter)
+		if configs.EmbeddingsProvider == "ollama" {
+			embeddingForContent, err = GetOllamaEmbeddingsVector(ctx, client, content.Content)
+		} else {
+			embeddingForContent, err = GetTEIEmbeddingsVector(content.Content)
+		}
+
 		if err != nil {
 			log.Errorf("Error in creating the embeddings for content id %d: %s", content.Id, err)
 			continue
 		}
 		vectorString := fmt.Sprintf("[%s]", strings.Trim(strings.Replace(fmt.Sprint(embeddingForContent), " ", ",", -1), "[]"))
 		db.Exec("UPDATE menu_contents SET content_vector = ?, updated_at=NOW() WHERE id = ?", vectorString, content.Id)
+		counter++
 	}
 	return nil
 }
@@ -136,10 +197,12 @@ func ImportMenuContentFromDir(db *gorm.DB, customerId string, dirPath string) er
 				ProductCategory: productCategory,
 				Content:         string(fileContents),
 			})
-			//sqlQuery += fmt.Sprintf(`INSERT INTO menu_contents(customer_id, file_name, product_name, product_id, product_category, content) VALUES('%s', '%s', '%s', '%s', '%s', '%s');`, customerId, v.Name(), productName, productId, productCategory, string(fileContents))
 		}
 	}
+	log.Infof("length of the content menus: %d", len(contentMenus))
 	if len(contentMenus) > 0 {
+		//Clean up the current data
+		db.Exec("DELETE FROM menu_search_words WHERE customer_id = ?", customerId)
 		db.Exec("DELETE FROM menu_prompts WHERE customer_id = ?", customerId)
 		db.Exec("DELETE FROM menu_contents WHERE customer_id = ?", customerId)
 		result := db.Create(contentMenus)
@@ -151,6 +214,7 @@ func ImportMenuContentFromDir(db *gorm.DB, customerId string, dirPath string) er
 			db.Exec("SELECT * FROM spAI_Save_Menu_Content_Words(?);", customerId)
 		}
 	}
+
 	return nil
 }
 func DownLoadAndImportMenu(db *gorm.DB, customerId string) (string, error) {
@@ -203,7 +267,7 @@ func DownLoadAndImportMenu(db *gorm.DB, customerId string) (string, error) {
 		log.Errorf("Error unzipping menu for customer %s: %s", customerId, err)
 		return "", err
 	}
-	os.Remove(zipFile)
+
 	return "Menu downloaded and imported successfully", nil
 }
 
@@ -263,6 +327,9 @@ func unzip(source, dest string) error {
 func QueryCorpus(db *gorm.DB, customerId string, query string, serverType string) string {
 
 	var result models.PromptResult
+	var embeddingForContent []float64
+	var err error
+
 	startTime := time.Now()
 
 	log.Infof("%s Menu search started at %s", serverType, startTime.Format(time.RFC3339))
@@ -273,31 +340,35 @@ func QueryCorpus(db *gorm.DB, customerId string, query string, serverType string
 	log.Infof("Procedure took took %s", time.Since(startTime))
 	db.Raw(sqlQuery).Scan(&result)
 	log.Infof("%+v", result)
-	if result.Counter > 0 {
-		return result.Content
-	} else {
+	// No results from BM25 and embeddings fallback is enabled.
+	if result.Counter == 0 && configs.EmbeddingsFallback {
 
-		ctx := context.Background()
+		if configs.EmbeddingsProvider == "ollama" {
+			ctx := context.Background()
 
-		ollamaApiUrl, _ := url.Parse(configs.OllamaApiUrl)
-		client := ollama.NewClient(ollamaApiUrl, http.DefaultClient)
+			ollamaApiUrl, _ := url.Parse(configs.OllamaApiUrl)
+			client := ollama.NewClient(ollamaApiUrl, http.DefaultClient)
 
-		embeddingForContent, err := GetEmbeddingsVector(ctx, client, query)
+			embeddingForContent, err = GetOllamaEmbeddingsVector(ctx, client, query)
+		} else {
+			embeddingForContent, err = GetTEIEmbeddingsVector(query)
+		}
 		if err != nil {
 			log.Errorf("Error in creating the embeddings: %s", err)
 		}
 		vectorString := fmt.Sprintf("[%s]", strings.Trim(strings.Replace(fmt.Sprint(embeddingForContent), " ", ",", -1), "[]"))
-		log.Infof("Ollama embeddings creation took %s", time.Since(startTime))
+		log.Infof("Embeddings creation took %s", time.Since(startTime))
 		startTime = time.Now()
 		sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Get_Menu_Items('%s','%s','%s')", customerId, strings.Replace(query, `'`, `''`, -1), vectorString)
 		log.Info(sqlQuery)
 		log.Infof("Procedure took took %s", time.Since(startTime))
 		db.Raw(sqlQuery).Scan(&result)
 		log.Infof("%+v", result)
-		return result.Content
 	}
+	return result.Content
 }
 
+/*
 func PublishNatsMessage(subject, data string) error {
 	nc, err := nats.Connect(configs.NatsUrl)
 	if err != nil {
@@ -312,3 +383,4 @@ func PublishNatsMessage(subject, data string) error {
 	}
 	return nil
 }
+*/

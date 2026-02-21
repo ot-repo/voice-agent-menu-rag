@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS menu_enrichments
     item VARCHAR(100) NOT NULL,
     type SMALLINT NOT NULL, -- 1: product; 2: category
     synonyms VARCHAR NULL,
-    created_at TIMESTAMP DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMP DEFAULT NOW() NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP DEFAULT NULL
 );
 

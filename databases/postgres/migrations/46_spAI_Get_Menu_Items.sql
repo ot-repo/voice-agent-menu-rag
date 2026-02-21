@@ -1,5 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
+
 CREATE OR REPLACE FUNCTION spAI_Get_Menu_Items(pcustomer_id CHAR(36), pprompt VARCHAR, pembeddings VARCHAR) RETURNS SETOF tpRecordSearchInputOutput AS $PROC$
 	DECLARE
 		datarow tpRecordMenuItem;
@@ -24,15 +25,15 @@ CREATE OR REPLACE FUNCTION spAI_Get_Menu_Items(pcustomer_id CHAR(36), pprompt VA
 			SELECT id, modified_prompt INTO promptId, modifiedPrompt FROM menu_prompts WHERE customer_id=pcustomer_id AND embeddings=withEmbeddings AND original_prompt=pprompt AND deleted_at IS NULL;
 			IF promptId = 0 OR promptId IS NULL THEN
 				--Make sure the prompt has no typos
-				SELECT COALESCE(fnAI_Get_Prompt_Check_Words(pcustomer_id, pprompt), '') INTO modifiedPrompt;
+				SELECT fnAI_Get_Prompt_Check_Words(pcustomer_id, pprompt) INTO modifiedPrompt;
 				INSERT INTO menu_prompts(customer_id, embeddings, original_prompt, modified_prompt) VALUES(pcustomer_id, withEmbeddings, pprompt, modifiedPrompt) RETURNING id INTO promptId;	
 				promptFirstAsk := true;
 			END IF;
 
-			IF  pprompt IN ('All Categories and Products', 'Alle Kategorien und Produkte') THEN
-				SELECT 1, mc.content, '' INTO result
-				FROM menu_contents mc
-				WHERE mc.customer_id=pcustomer_id AND mc.file_name='categories_products.md' AND mc.deleted_at IS NULL;
+			IF  LOWER(pprompt) IN ('all categories and products','alle kategorien und produkte','alle produkte','all products') THEN
+				SELECT 1, content, '' INTO result
+				FROM menu_contents
+				WHERE customer_id=pcustomer_id AND file_name='categories_products.md' AND deleted_at IS NULL;
 				-- Logs the results.
 				INSERT INTO menu_search_logs(prompt_id, embeddings, match_count)
 				VALUES(promptId, false, 1);
@@ -45,7 +46,7 @@ CREATE OR REPLACE FUNCTION spAI_Get_Menu_Items(pcustomer_id CHAR(36), pprompt VA
 					SELECT promptId, mco.id, COALESCE(mco.product_name <@> to_bm25query(pprompt,'idx_menu_contents_product_name_bm25'), 0),
 					COALESCE(mco.product_id <@> to_bm25query(pprompt,'idx_menu_contents_product_id_bm25'), 0),
 					COALESCE(mco.product_category <@> to_bm25query(pprompt,'idx_menu_contents_product_category_bm25'), 0),
-					0 AS total_bm25, CASE pembeddings WHEN '[]' THEN 1 ELSE mco.content_vector <=> pembeddings::VECTOR END AS similarity
+					0 AS total_bm25, CASE pembeddings WHEN '[]' THEN 1 ELSE COALESCE(mco.content_vector <=> pembeddings::VECTOR, 1) END AS similarity
 					FROM menu_contents AS mco
 					WHERE mco.customer_id=pcustomer_id AND mco.deleted_at IS NULL
 					AND mco.file_name != 'categories_products.md';
@@ -58,9 +59,9 @@ CREATE OR REPLACE FUNCTION spAI_Get_Menu_Items(pcustomer_id CHAR(36), pprompt VA
 
 				END IF;
 
-				-- No result with bm25, retrun and give a chance to the embeddings vector
+				-- No result with bm25, return and give a chance to the embeddings vector if it is requested.
 				IF pembeddings = '[]' AND NOT EXISTS(SELECT prompt_id FROM menu_searches WHERE prompt_id=promptId AND total_bm25 > 0) THEN
-					SELECT 0, 'No results with BM25 only search', '' INTO result;
+					SELECT 0, '', '' INTO result;
 					INSERT INTO menu_search_logs(prompt_id, embeddings, match_count)
 					VALUES(promptId, false, result.counter);
 				ELSE
@@ -73,8 +74,8 @@ CREATE OR REPLACE FUNCTION spAI_Get_Menu_Items(pcustomer_id CHAR(36), pprompt VA
 							firstSimiliarity := datarow.similarity;
 							firstIter := false;
 						END IF;
-
-						IF firstSimiliarity > 0.55 OR (datarow.similarity/prevSimiliarity > 1.5) OR (datarow.similarity/firstSimiliarity >= 2) THEN
+						--Ollama treshold: 0.55, TEI: 0.74
+						IF firstSimiliarity > 0.74 OR (datarow.similarity/prevSimiliarity > 1.5) OR (datarow.similarity/firstSimiliarity >= 2) THEN
 							--RAISE WARNING 'firstSimiliarity: % datarow.similarity: % prevSimiliarity: %', firstSimiliarity, datarow.similarity, prevSimiliarity;
 							--result.content := result.content || e'\n---\n' || prevContent;
 							EXIT;
@@ -96,6 +97,7 @@ CREATE OR REPLACE FUNCTION spAI_Get_Menu_Items(pcustomer_id CHAR(36), pprompt VA
 		RETURN NEXT result;
 	END;
 $PROC$ LANGUAGE plpgsql;
+
 -- +goose StatementEnd
 
 -- +goose Down
