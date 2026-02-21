@@ -22,7 +22,7 @@ CREATE OR REPLACE FUNCTION spAI_Save_Menu_Content_Words(pcustomer_id CHAR(36)) R
 			INSERT INTO menu_search_words(customer_id, word)
     		SELECT pcustomer_id AS customer_id, word
     		FROM temp_words
-    		WHERE word ~ '^[a-zA-Z]{4,100}$';
+    		WHERE word ~ '^[a-zA-Züößä]{4,100}$';
 
 			DROP TABLE temp_words;
 		END IF;

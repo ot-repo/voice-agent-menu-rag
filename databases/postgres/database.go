@@ -16,6 +16,10 @@ func Connect(DBUrl string) *gorm.DB {
 		SkipDefaultTransaction: true,
 		PrepareStmt:            true,
 		TranslateError:         true,
+		// Use UTC timezone when providing datetime to created_at, uppdated_at fields etc.
+		NowFunc: func() time.Time {
+			return time.Now().UTC()
+		},
 	})
 	if err != nil {
 		log.Errorf("Failed to connect to database: %+v", err)

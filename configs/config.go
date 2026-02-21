@@ -19,6 +19,11 @@ var (
 	OllamaApiUrl           string
 	OllamaEmbeddingsModel  string
 
+	TeiApiUrl string
+
+	EmbeddingsProvider string
+	EmbeddingsFallback bool
+
 	SmartKasseApiAuthToken       string
 	SmartKasseApiMenuDownloadUrl string
 )
@@ -46,6 +51,11 @@ func init() {
 	OllamaKeepAlive = viper.GetInt("OLLAMA_KEEP_ALIVE")
 	OllamaApiUrl = viper.GetString("OLLAMA_API_URL")
 	OllamaEmbeddingsModel = viper.GetString("OLLAMA_EMBEDDINGS_MODEL")
+
+	TeiApiUrl = viper.GetString("TEI_API_URL")
+
+	EmbeddingsProvider = viper.GetString("EMBEDDINGS_PROVIDER")
+	EmbeddingsFallback = viper.GetBool("EMBEDDINGS_FALLBACK")
 
 	SmartKasseApiAuthToken = viper.GetString("SK_API_AUTH_TOKEN")
 	SmartKasseApiMenuDownloadUrl = viper.GetString("SK_API_MENU_DOWNLOAD_URL")

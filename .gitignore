@@ -21,6 +21,8 @@ sk-rag.pem
 # Dependency directories (remove the comment below to include it)
 vendor/
 
+tei/
+
 # Go workspace file
 go.work
 .idea/

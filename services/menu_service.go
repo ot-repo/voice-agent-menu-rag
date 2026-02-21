@@ -2,9 +2,9 @@ package services
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
-	"rag-ai/configs"
 	"rag-ai/models"
 	"rag-ai/utils"
 	"rag-ai/validations"
@@ -89,26 +89,28 @@ func (s *menuService) CreateMenu(c fiber.Ctx, params *validations.CreateMenuRecu
 	}
 	// Update the words table
 	s.DB.Exec("SELECT * FROM spAI_Save_Menu_Content_Words(?);", params.CustomerID)
-	err = utils.PublishNatsMessage(configs.NatsCustomerMenuPrefix+"."+params.CustomerID, "GenerateAllCustomerContentVectors")
-	if err != nil {
-		log.Errorf("Cannnot publish to the subject: %s", configs.NatsCustomerMenuPrefix+"."+params.CustomerID)
-	}
+	// err = utils.PublishNatsMessage(configs.NatsCustomerMenuPrefix+"."+params.CustomerID, "GenerateAllCustomerContentVectors")
+	// if err != nil {
+	// 	log.Errorf("Cannnot publish to the subject: %s", configs.NatsCustomerMenuPrefix+"."+params.CustomerID)
+	// }
 
 	return nil
 }
 
 func (s *menuService) TaskMenu(c fiber.Ctx, params *validations.TaskMenu) (string, error) {
+	var result models.SaveResult
 
 	if err := s.Validate.Struct(params); err != nil {
 		return "", err
 	}
 
-	tm := models.MenuTask{CustomerID: params.CustomerID, Task: params.Task}
-	result := s.DB.Create(&tm)
-	if result.Error == nil {
-		return "Task created successfully", nil
+	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Task('%s','%s')", params.CustomerID, params.Task)
+	s.DB.Raw(sqlQuery).Scan(&result)
+
+	if result.Code == 0 {
+		return result.Message, nil
 	} else {
-		return "Task could not be created", result.Error
+		return result.Message, errors.New("Task could not be created")
 	}
 }
 
@@ -121,7 +123,7 @@ func (s *menuService) SearchMenu(c fiber.Ctx, params *validations.SearchMenu) (s
 }
 
 func (s *menuService) EnrichMenu(c fiber.Ctx, params *validations.EnrichMenu) (string, error) {
-	var result models.EnrichmentResult
+	var result models.SaveResult
 
 	if err := s.Validate.Struct(params); err != nil {
 		return "", err

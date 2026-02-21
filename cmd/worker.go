@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"rag-ai/configs"
 	databases "rag-ai/databases/postgres"
 	"rag-ai/models"
 	"rag-ai/utils"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,10 +25,26 @@ func main() {
 	db := setupWorkerDatabase()
 	defer closeWorkerDatabase(db)
 
-	// Start server and handle graceful shutdown
-	workerErrors := make(chan error, 1)
-	startWorker(db, ctx)
-	handleWorkerGracefulShutdown(ctx, workerErrors)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	worker := &Worker{}
+	go worker.run(db, ctx)
+
+	// Wait for a signal
+	sig := <-sigChan
+	log.Infof("\nReceived signal: %v. Initiating graceful shutdown...\n", sig)
+
+	// Cancel the context to tell the run loop to stop accepting new work
+	cancel()
+
+	// Wait for all spawned goroutines to finish
+	worker.wg.Wait()
+	log.Infof("All tasks completed. Worker stopped.")
+}
+
+type Worker struct {
+	wg sync.WaitGroup
 }
 
 func setupWorkerDatabase() *gorm.DB {
@@ -34,46 +52,89 @@ func setupWorkerDatabase() *gorm.DB {
 	return db
 }
 
-func startWorker(db *gorm.DB, ctx context.Context) {
-	log.Info("Worker started.......")
+// run contains the main loop and the branching logic
+func (w *Worker) run(db *gorm.DB, ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		processDatabaseQueue(db)
-		time.Sleep(10 * time.Second)
+		select {
+		case <-ctx.Done():
+			// Context was canceled (shutdown signal received)
+			log.Info("Worker loop stopped.")
+			return
+		case <-ticker.C:
+			pendingTasks := []models.MenuTask{}
+			condition := fmt.Sprintf(`EXTRACT(EPOCH FROM(CURRENT_TIMESTAMP-created_at)) > 30 AND status=%d`, configs.TaskPending)
+			db.Debug().Find(&pendingTasks, condition)
+
+			log.Infof("pending tasks=%+v", pendingTasks)
+			for _, task := range pendingTasks {
+				if task.Task == "import" {
+					w.wg.Add(1)
+					go w.importMenu(db, task)
+				} else {
+					w.wg.Add(1)
+					go w.generateVectors(db, task)
+				}
+			}
+		}
 	}
 }
 
-func processDatabaseQueue(db *gorm.DB) {
-	pendingTasks := []models.MenuTask{}
-	db.Find(&pendingTasks, "status=0 AND deleted_at IS NULL")
+func (w *Worker) importMenu(db *gorm.DB, task models.MenuTask) {
+	defer w.wg.Done() // Decrement counter when function exits
 
-	for _, task := range pendingTasks {
-		if task.Task == "import" {
-			_, err := utils.DownLoadAndImportMenu(db, task.CustomerID)
-			if err != nil {
-				log.Errorf("Error in downloading and importing menu for customer %s: %s", task.CustomerID, err)
-				db.Model(&task).Updates(map[string]interface{}{"status": 2, "message": err.Error()})
-			} else {
-				db.Model(&task).Updates(map[string]interface{}{"status": 1})
-				// Import the menu content from the directory to the database.
-				utils.ImportMenuContentFromDir(db, task.CustomerID, "data/menu_"+task.CustomerID)
-				// After successful import, add a task to generate the content vectors for the customer.
-				newTask := models.MenuTask{
-					CustomerID: task.CustomerID,
-					Task:       "vectors",
-					Status:     0,
-				}
-				db.Create(&newTask)
+	log.Info("Import menu task started...")
+
+	_, err := utils.DownLoadAndImportMenu(db, task.CustomerID)
+	if err != nil {
+		log.Errorf("Error in downloading and importing menu for customer %s: %s", task.CustomerID, err)
+		db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskError, "message": err.Error()})
+	} else {
+		db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskRunning})
+		// Import the menu content from the directory to the database.
+		err = utils.ImportMenuContentFromDir(db, task.CustomerID, "data/menu_"+task.CustomerID)
+		if err == nil {
+			db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskCompleted})
+			// After successful import, add a task to generate the content vectors for the customer.
+			// If there is an ongoing vector job, cancel it first.
+			db.Debug().Model(models.MenuTask{}).Where("customer_id=? and status=? and task='vectors'", task.CustomerID, configs.TaskRunning).Updates(map[string]interface{}{"status": configs.TaskCanceled})
+			newTask := models.MenuTask{
+				CustomerID: task.CustomerID,
+				Task:       "vectors",
+				Status:     configs.TaskPending,
 			}
-		}
-		if task.Task == "vectors" {
-			err := utils.GenerateAllCustomerContentVectors(db, task.CustomerID)
+			db.Create(&newTask)
+
+			err = os.Remove("data/menu_" + task.CustomerID + ".zip")
 			if err != nil {
-				log.Errorf("Error in generating content vectors for customer %s: %s", task.CustomerID, err)
-				db.Model(&task).Updates(map[string]interface{}{"status": 2, "message": err.Error()})
-			} else {
-				db.Model(&task).Updates(map[string]interface{}{"status": 1})
+				log.Errorf("Error deleting the zip file: %s", err.Error())
 			}
+			err = os.RemoveAll("data/menu_" + task.CustomerID)
+			if err != nil {
+				log.Errorf("Error deleting the directory: %s", err.Error())
+			}
+		} else {
+			log.Infof("ImportMenuContentFromDir error: %+v", err)
 		}
+	}
+
+	log.Info("Import menu task finished.")
+}
+
+func (w *Worker) generateVectors(db *gorm.DB, task models.MenuTask) {
+	defer w.wg.Done() // Decrement counter when function exits
+
+	log.Info("Generate vectors task started...")
+
+	db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskRunning})
+	err := utils.GenerateAllCustomerContentVectors(db, task.CustomerID)
+	if err != nil {
+		log.Errorf("Error in generating content vectors for customer %s: %s", task.CustomerID, err)
+		db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskError, "message": err.Error()})
+	} else {
+		db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskCompleted})
 	}
 }
 

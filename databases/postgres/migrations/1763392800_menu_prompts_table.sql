@@ -3,12 +3,12 @@
 CREATE TABLE IF NOT EXISTS menu_prompts
 (
     id SERIAL PRIMARY KEY,
-    customer_id CHAR(36) NOT NULL REFERENCES clients(customer_id),
+    customer_id CHAR(36) NOT NULL REFERENCES clients(customer_id) ON DELETE CASCADE,
     embeddings BOOLEAN NOT NULL DEFAULT false,
     original_prompt VARCHAR NOT NULL,
     modified_prompt VARCHAR NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMP DEFAULT NOW() NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP DEFAULT NULL
 );
 -- +goose StatementEnd

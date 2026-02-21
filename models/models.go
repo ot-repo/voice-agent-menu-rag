@@ -74,11 +74,10 @@ type VariationPrice struct {
 type PromptResult struct {
 	Counter int    `gorm:"not null" json:"counter"`
 	Content string `gorm:"not null" json:"content"`
-	Answer  string `gorm:"not null" json:"answer"`
 }
 
-type EnrichmentResult struct {
-	Code    string `gorm:"not null" json:"code"`
+type SaveResult struct {
+	Code    int    `gorm:"not null" json:"code"`
 	Message string `gorm:"not null" json:"message"`
 }
 
@@ -99,4 +98,8 @@ type MenuContent struct {
 	ProductCategory string         `gorm:"not null" json:"product_category"`
 	Content         string         `gorm:"not null" json:"content"`
 	ContentVector   sql.NullString `gorm:"null" json:"content_vector"`
+}
+
+type TEIEmbeddingRequest struct {
+	Inputs string `json:"inputs"`
 }

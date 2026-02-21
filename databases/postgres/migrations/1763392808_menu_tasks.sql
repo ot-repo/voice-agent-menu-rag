@@ -3,12 +3,12 @@
 CREATE TABLE IF NOT EXISTS menu_tasks
 (
     id SERIAL PRIMARY KEY,
-    customer_id CHAR(36) NOT NULL REFERENCES clients(customer_id),
+    customer_id CHAR(36) NOT NULL REFERENCES clients(customer_id) ON DELETE CASCADE,
     task VARCHAR NOT NULL,
-    status INT NOT NULL DEFAULT 0,  -- 0: pending, 1: running, 2: completed, 3: error
+    status INT NOT NULL DEFAULT 0,  -- 0: pending, 1: running, 2: completed, 3: error, 4: canceled
     message VARCHAR NULL,   --If an error happens, the error message will be saved here.
-    created_at TIMESTAMP DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMP DEFAULT NOW() NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     deleted_at TIMESTAMP DEFAULT NULL
 );
 

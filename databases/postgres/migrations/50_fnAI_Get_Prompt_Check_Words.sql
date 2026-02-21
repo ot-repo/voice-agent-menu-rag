@@ -4,8 +4,10 @@
 CREATE OR REPLACE FUNCTION fnAI_Get_Prompt_Check_Words(pcustomer_id CHAR(36), pprompt VARCHAR) RETURNS VARCHAR AS $PROC$
 	DECLARE
 		result VARCHAR := '';
+		lowerPrompt VARCHAR := '';
 		currentTerm VARCHAR := '';
 		tmpTerm VARCHAR := '';
+		noSpace VARCHAR := '';
 		maxIterations INT := 20;
 		counter INT := 0;
 
@@ -14,7 +16,41 @@ CREATE OR REPLACE FUNCTION fnAI_Get_Prompt_Check_Words(pcustomer_id CHAR(36), pp
 		IF NOT EXISTS(SELECT id FROM clients WHERE customer_id=pcustomer_id AND deleted_at IS NULL) THEN
 			RETURN 'Invalid client supplied.';
 		ELSE
-			SELECT SPLIT_PART(pprompt, ' ', 1) INTO currentTerm;
+			--The words less than 4 characters must be trimmed.
+			--The terms are saved in lowercase.
+			--Wurst mit Zwiebeln => Wurst Zwiebeln 
+			SELECT LOWER(STRING_AGG(word, ' ')) INTO lowerPrompt
+			FROM unnest(string_to_array(pprompt, ' ')) AS word
+			WHERE length(word) >= 4;
+
+			
+			--In German the words are conjugated, so if there are 2 words like AAA BBB, try AAABBB first.
+			SELECT REPLACE(lowerPrompt, ' ', '') INTO noSpace;
+			-- Only 1 space
+			IF LENGTH(lowerPrompt) - LENGTH(noSpace) = 1 THEN
+				SELECT COALESCE(word, noSpace) INTO currentTerm
+				FROM menu_search_words
+  				WHERE customer_id=pcustomer_id 
+				--AND word=noSpace 
+				AND similarity(word, noSpace) > 0.65 
+				ORDER BY similarity(word, noSpace) DESC LIMIT 1;
+				IF currentTerm != '' THEN
+					RETURN currentTerm;
+				ELSE
+					--Swap the words and look for the compound word.
+					SELECT SPLIT_PART(lowerPrompt, ' ', 2) || SPLIT_PART(lowerPrompt, ' ', 1) INTO noSpace;
+					SELECT COALESCE(word, noSpace) INTO currentTerm
+					FROM menu_search_words
+  					WHERE customer_id=pcustomer_id 
+					--AND word=noSpace LIMIT 1
+					AND similarity(word, noSpace) > 0.65 
+					ORDER BY similarity(word, noSpace) DESC LIMIT 1;
+					IF currentTerm != '' THEN
+						RETURN currentTerm;
+					END IF;
+				END IF;
+			END IF;
+			SELECT SPLIT_PART(lowerPrompt, ' ', 1) INTO currentTerm;
 			WHILE currentTerm != '' AND counter < maxIterations LOOP
 				IF LENGTH(TRIM(currentTerm)) >= 4 THEN
 					SELECT COALESCE(word, currentTerm) INTO tmpTerm
@@ -32,13 +68,13 @@ CREATE OR REPLACE FUNCTION fnAI_Get_Prompt_Check_Words(pcustomer_id CHAR(36), pp
 					END IF;
 				END IF;
 
-				pprompt := TRIM(LTRIM(pprompt, currentTerm));
-				SELECT SPLIT_PART(pprompt, ' ', 1) INTO currentTerm;
+				lowerPrompt := TRIM(LTRIM(lowerPrompt, currentTerm));
+				SELECT SPLIT_PART(lowerPrompt, ' ', 1) INTO currentTerm;
 				counter := counter+1;
 			END LOOP;
 		END IF;
 		-- Play safe and return the original prompt if something goes wrong or if the result is empty.
-		IF result IS NULL THEN
+		IF result ='' OR result IS NULL THEN
 			RETURN pprompt;
 		ELSE
 			RETURN result;
