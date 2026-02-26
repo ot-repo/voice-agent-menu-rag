@@ -14,10 +14,16 @@ var (
 	NatsUrl                string
 	NatsCustomerMenuPrefix string
 	ApiAccessKey           string
-	DataBaseUrl            string
-	OllamaKeepAlive        int
-	OllamaApiUrl           string
-	OllamaEmbeddingsModel  string
+
+	DataBaseUrl       string
+	MaxDbOpenConns    int
+	MaxDbOpenConnsTtl int
+	MaxDbIdleConns    int
+	MaxDbIdleConnsTtl int
+
+	OllamaKeepAlive       int
+	OllamaApiUrl          string
+	OllamaEmbeddingsModel string
 
 	TeiApiUrl string
 
@@ -40,6 +46,11 @@ func init() {
 
 	// database configuration
 	DataBaseUrl = viper.GetString("DATABASE_URL")
+
+	MaxDbOpenConns = viper.GetInt("MAX_DB_OPEN_CONNS")
+	MaxDbOpenConnsTtl = viper.GetInt("MAX_DB_OPEN_CONNS_TTL")
+	MaxDbIdleConns = viper.GetInt("MAX_DB_IDLE_CONNS")
+	MaxDbIdleConnsTtl = viper.GetInt("MAX_DB_IDLE_CONNS_TTL")
 
 	// Nats configuration
 	NatsUrl = viper.GetString("NATS_URL")

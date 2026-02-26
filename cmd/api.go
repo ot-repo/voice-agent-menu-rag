@@ -17,6 +17,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/compress"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/helmet"
+	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 )
 
@@ -30,6 +31,7 @@ import (
 // @in header
 // @name Authorization
 // @description Example Value: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -39,12 +41,23 @@ func main() {
 	defer closeAPIDatabase(db)
 	setupAPIRoutes(app, db)
 
+	//Register the cronjob to get the clients every minute
+	getClients(db)
+	c := cron.New()
+	c.AddFunc("@every 1m", func() { getClients(db) })
+	c.Start()
+
 	apiAddress := fmt.Sprintf("%s:%d", configs.AppHost, configs.AppPort)
 
 	// Start server and handle graceful shutdown
 	serverErrors := make(chan error, 1)
 	go startAPIServer(app, apiAddress, serverErrors)
 	handleAPIGracefulShutdown(ctx, app, serverErrors)
+}
+
+func getClients(db *gorm.DB) {
+	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Get_Clients()")
+	db.Raw(sqlQuery).Scan(&utils.RagClients)
 }
 
 func setupAPIFiberApp() *fiber.App {

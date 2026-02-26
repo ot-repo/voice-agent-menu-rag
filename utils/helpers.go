@@ -27,6 +27,8 @@ import (
 	ollama "github.com/ollama/ollama/api"
 )
 
+var RagClients []models.Client
+
 func StringToUint(s string) uint {
 	i, _ := strconv.Atoi(s)
 	return uint(i)
@@ -42,6 +44,24 @@ func Addslashes(str string) string {
 		buf.WriteRune(char)
 	}
 	return buf.String()
+}
+
+func GetClientId(customer_id string) int {
+	for _, client := range RagClients {
+		if client.CustomerID == customer_id {
+			return client.ID
+		}
+	}
+	return -1
+}
+
+func GetCustomerId(client_id int) string {
+	for _, client := range RagClients {
+		if client.ID == client_id {
+			return client.CustomerID
+		}
+	}
+	return ""
 }
 
 func GetOllamaEmbeddingsVector(ctx context.Context, client *api.Client, doc string) ([]float64, error) {
@@ -61,7 +81,12 @@ func GetOllamaEmbeddingsVector(ctx context.Context, client *api.Client, doc stri
 }
 
 func GetTEIEmbeddingsVector(inputText string) ([]float64, error) {
-	// 1. Construct the request payload
+
+	//Empty strings do not have embeddings.
+	if inputText == "" {
+		return nil, nil
+	}
+	// Construct the request payload
 	payload := models.TEIEmbeddingRequest{
 		Inputs: inputText,
 	}
@@ -108,7 +133,7 @@ func GetTEIEmbeddingsVector(inputText string) ([]float64, error) {
 	return embeddings[0], nil
 }
 
-func GenerateAllCustomerContentVectors(db *gorm.DB, customerId string) error {
+func GenerateAllCustomerContentVectors(db *gorm.DB, clientId int, taskId int) error {
 
 	var embeddingForContent []float64
 	var err error
@@ -124,12 +149,23 @@ func GenerateAllCustomerContentVectors(db *gorm.DB, customerId string) error {
 		Content string `db:"content"`
 	}
 
-	log.Infof("Called GenerateAllCustomerContentVectors for customer: %s", customerId)
+	log.Infof("Called GenerateAllCustomerContentVectors for client: %d", clientId)
 
 	contents := []Content{}
-	db.Raw("SELECT id, content FROM menu_contents WHERE customer_id = ?", customerId).Scan(&contents)
+	db.Raw("SELECT id, content FROM menu_contents WHERE client_id = ?", clientId).Scan(&contents)
+	var taskStatus int
 	for _, content := range contents {
-		log.Infof("Counter in GenerateAllCustomerContentVectors: %d", counter)
+		if content.Content == "" {
+			continue
+		}
+		//Check every 5 runs if the task is not canceled. We should make this instant via channels.
+		if counter%5 == 0 {
+			db.Raw("SELECT status FROM menu_tasks WHERE id=? AND client_id = ?", taskId, clientId).Scan(&taskStatus)
+			if taskStatus == configs.TaskCanceled {
+				return errors.New("Task canceled.")
+			}
+		}
+		log.Infof("GenerateAllCustomerContentVectors client: %d -- counter: %d", clientId, counter)
 		if configs.EmbeddingsProvider == "ollama" {
 			embeddingForContent, err = GetOllamaEmbeddingsVector(ctx, client, content.Content)
 		} else {
@@ -147,7 +183,7 @@ func GenerateAllCustomerContentVectors(db *gorm.DB, customerId string) error {
 	return nil
 }
 
-func ImportMenuContentFromDir(db *gorm.DB, customerId string, dirPath string) error {
+func ImportMenuContentFromDir(db *gorm.DB, clientId int, dirPath string) error {
 
 	var productName string
 	var productId string
@@ -190,7 +226,7 @@ func ImportMenuContentFromDir(db *gorm.DB, customerId string, dirPath string) er
 				i++
 			}
 			contentMenus = append(contentMenus, &models.MenuContent{
-				CustomerID:      customerId,
+				ClientID:        clientId,
 				FileName:        v.Name(),
 				ProductName:     productName,
 				ProductID:       productId,
@@ -199,31 +235,32 @@ func ImportMenuContentFromDir(db *gorm.DB, customerId string, dirPath string) er
 			})
 		}
 	}
-	log.Infof("length of the content menus: %d", len(contentMenus))
+
 	if len(contentMenus) > 0 {
 		//Clean up the current data
-		db.Exec("DELETE FROM menu_search_words WHERE customer_id = ?", customerId)
-		db.Exec("DELETE FROM menu_prompts WHERE customer_id = ?", customerId)
-		db.Exec("DELETE FROM menu_contents WHERE customer_id = ?", customerId)
+		db.Exec("DELETE FROM menu_search_words WHERE client_id = ?", clientId)
+		db.Exec("DELETE FROM menu_prompts WHERE client_id = ?", clientId)
+		db.Exec("DELETE FROM menu_contents WHERE client_id = ?", clientId)
 		result := db.Create(contentMenus)
 		if result.Error != nil {
-			log.Errorf("Error in inserting menu content for customer %s: %s", customerId, result.Error)
+			log.Errorf("Error in inserting menu content for client %d: %s", clientId, result.Error)
 			return result.Error
 		} else {
 			// Update the words table
-			db.Exec("SELECT * FROM spAI_Save_Menu_Content_Words(?);", customerId)
+			db.Exec("SELECT * FROM spAI_Save_Menu_Content_Words(?);", clientId)
 		}
 	}
 
 	return nil
 }
-func DownLoadAndImportMenu(db *gorm.DB, customerId string) (string, error) {
+func DownLoadAndImportMenu(db *gorm.DB, clientId int) (string, error) {
 
 	// Download menu
-	menuUrl := fmt.Sprintf(configs.SmartKasseApiMenuDownloadUrl, customerId)
+	customer_id := GetCustomerId(clientId)
+	menuUrl := fmt.Sprintf(configs.SmartKasseApiMenuDownloadUrl, customer_id)
 	req, err := http.NewRequest("GET", menuUrl, nil)
 	if err != nil {
-		log.Errorf("Error creating request to download menu for customer %s: %s", customerId, err)
+		log.Errorf("Error creating request to download menu for client %d: %s", clientId, err)
 		return "", err
 	}
 
@@ -232,24 +269,24 @@ func DownLoadAndImportMenu(db *gorm.DB, customerId string) (string, error) {
 	resp, err := client.Do(req)
 
 	if err != nil {
-		log.Errorf("Error downloading menu for customer %s: %s", customerId, err)
+		log.Errorf("Error downloading menu for client %d: %s", clientId, err)
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Errorf("Non-OK HTTP status when downloading menu for customer %s: %s", customerId, resp.Status)
+		log.Errorf("Non-OK HTTP status when downloading menu for client %d: %s", clientId, resp.Status)
 		return "", errors.New("Failed to download menu, status: " + resp.Status)
 	}
 
 	menuData, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Errorf("Error reading menu response body for customer %s: %s", customerId, err)
+		log.Errorf("Error reading menu response body for client %d: %s", clientId, err)
 		return "", err
 	}
 
 	// Create the file
-	zipFile := "data/menu_" + customerId + ".zip"
+	zipFile := fmt.Sprintf("data/menu_%d.zip", clientId)
 	out, err := os.Create(zipFile)
 	if err != nil {
 		return "", err
@@ -262,9 +299,10 @@ func DownLoadAndImportMenu(db *gorm.DB, customerId string) (string, error) {
 		return "", err
 	}
 
-	err = unzip(zipFile, "data/menu_"+customerId)
+	unzipFolder := fmt.Sprintf("data/menu_%d", clientId)
+	err = unzip(zipFile, unzipFolder)
 	if err != nil {
-		log.Errorf("Error unzipping menu for customer %s: %s", customerId, err)
+		log.Errorf("Error unzipping menu for client %d: %s", clientId, err)
 		return "", err
 	}
 
@@ -324,7 +362,7 @@ func unzip(source, dest string) error {
 	return nil
 }
 
-func QueryCorpus(db *gorm.DB, customerId string, query string, serverType string) string {
+func QueryCorpus(db *gorm.DB, clientId int, query string, serverType string) string {
 
 	var result models.PromptResult
 	var embeddingForContent []float64
@@ -335,7 +373,7 @@ func QueryCorpus(db *gorm.DB, customerId string, query string, serverType string
 	log.Infof("%s Menu search started at %s", serverType, startTime.Format(time.RFC3339))
 
 	// Perform a BM25 search first, and if no results then fallback to the mebeddings.
-	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Get_Menu_Items('%s','%s','%s')", customerId, strings.Replace(query, `'`, `''`, -1), "[]")
+	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Get_Menu_Items(%d,'%s','%s')", clientId, strings.Replace(query, `'`, `''`, -1), "[]")
 	log.Info(sqlQuery)
 	log.Infof("Procedure took took %s", time.Since(startTime))
 	db.Raw(sqlQuery).Scan(&result)
@@ -359,7 +397,7 @@ func QueryCorpus(db *gorm.DB, customerId string, query string, serverType string
 		vectorString := fmt.Sprintf("[%s]", strings.Trim(strings.Replace(fmt.Sprint(embeddingForContent), " ", ",", -1), "[]"))
 		log.Infof("Embeddings creation took %s", time.Since(startTime))
 		startTime = time.Now()
-		sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Get_Menu_Items('%s','%s','%s')", customerId, strings.Replace(query, `'`, `''`, -1), vectorString)
+		sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Get_Menu_Items(%d,'%s','%s')", clientId, strings.Replace(query, `'`, `''`, -1), vectorString)
 		log.Info(sqlQuery)
 		log.Infof("Procedure took took %s", time.Since(startTime))
 		db.Raw(sqlQuery).Scan(&result)

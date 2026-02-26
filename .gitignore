@@ -12,6 +12,12 @@ mcp
 worker
 sk-rag.pem
 
+# Auxilary data files
+*.bak
+*.log
+*.csv
+*.zip
+
 # Test binary, built with `go test -c`
 *.test
 

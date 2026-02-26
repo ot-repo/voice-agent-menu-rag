@@ -2,9 +2,10 @@
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS menu_searches
 (
-    id SERIAL PRIMARY KEY,
+    id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     prompt_id INT NOT NULL REFERENCES menu_prompts(id) ON DELETE CASCADE,
-    content_id INT NOT NULL REFERENCES menu_contents(id) ON DELETE CASCADE,
+    client_id INT NOT NULL,
+    content_id INT NOT NULL,
     product_name_bm25 NUMERIC(10, 7) NOT NULL,
     product_id_bm25 NUMERIC(10, 7) NOT NULL,
     product_category_bm25 NUMERIC(10, 7) NOT NULL,
@@ -12,7 +13,8 @@ CREATE TABLE IF NOT EXISTS menu_searches
     similarity NUMERIC(17,16) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    deleted_at TIMESTAMP DEFAULT NULL
+    deleted_at TIMESTAMP DEFAULT NULL,
+    FOREIGN KEY (content_id, client_id) REFERENCES menu_contents(id, client_id)
 );
 -- +goose StatementEnd
 
