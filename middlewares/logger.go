@@ -9,5 +9,6 @@ func LoggerConfig() fiber.Handler {
 	return logger.New(logger.Config{
 		Format:     "${time} ${method} ${status} ${path} in ${latency}\n",
 		TimeFormat: "15:04:05.00",
+		TimeZone:   "UTC",
 	})
 }

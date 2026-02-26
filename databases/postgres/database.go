@@ -1,6 +1,7 @@
 package databases
 
 import (
+	"rag-ai/configs"
 	"time"
 
 	"github.com/gofiber/fiber/v3/log"
@@ -12,7 +13,7 @@ import (
 func Connect(DBUrl string) *gorm.DB {
 	db, err := gorm.Open(postgres.Open(DBUrl), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Error),
-		//Logger:                 logger.Default.LogMode(logger.Info),
+		//Logger:                 logger.Default.LogMode(logger.Warn),
 		SkipDefaultTransaction: true,
 		PrepareStmt:            true,
 		TranslateError:         true,
@@ -31,9 +32,10 @@ func Connect(DBUrl string) *gorm.DB {
 	}
 
 	// Config connection pooling
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
-	sqlDB.SetConnMaxLifetime(60 * time.Minute)
+	sqlDB.SetMaxIdleConns(configs.MaxDbIdleConns)
+	sqlDB.SetConnMaxIdleTime(time.Duration(configs.MaxDbIdleConnsTtl) * time.Minute)
+	sqlDB.SetMaxOpenConns(configs.MaxDbOpenConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(configs.MaxDbOpenConnsTtl) * time.Minute)
 
 	return db
 }

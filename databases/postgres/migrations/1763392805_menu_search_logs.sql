@@ -2,7 +2,7 @@
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS menu_search_logs
 (
-    prompt_id INT NOT NULL REFERENCES menu_prompts(id) ON DELETE CASCADE,
+    prompt_id INT NOT NULL REFERENCES menu_prompts(id),
     embeddings BOOLEAN NOT NULL DEFAULT false,
     match_count INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,

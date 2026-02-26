@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 
-CREATE OR REPLACE FUNCTION fnAI_Get_Prompt_Check_Words(pcustomer_id CHAR(36), pprompt VARCHAR) RETURNS VARCHAR AS $PROC$
+CREATE OR REPLACE FUNCTION fnAI_Get_Prompt_Check_Words(pclient_id INTEGER, pprompt VARCHAR) RETURNS VARCHAR AS $PROC$
 	DECLARE
 		result VARCHAR := '';
 		lowerPrompt VARCHAR := '';
@@ -12,8 +12,8 @@ CREATE OR REPLACE FUNCTION fnAI_Get_Prompt_Check_Words(pcustomer_id CHAR(36), pp
 		counter INT := 0;
 
 	BEGIN
-
-		IF NOT EXISTS(SELECT id FROM clients WHERE customer_id=pcustomer_id AND deleted_at IS NULL) THEN
+		
+		IF NOT EXISTS (SELECT id FROM clients WHERE id=pclient_id AND deleted_at IS NULL) THEN
 			RETURN 'Invalid client supplied.';
 		ELSE
 			--The words less than 4 characters must be trimmed.
@@ -30,7 +30,7 @@ CREATE OR REPLACE FUNCTION fnAI_Get_Prompt_Check_Words(pcustomer_id CHAR(36), pp
 			IF LENGTH(lowerPrompt) - LENGTH(noSpace) = 1 THEN
 				SELECT COALESCE(word, noSpace) INTO currentTerm
 				FROM menu_search_words
-  				WHERE customer_id=pcustomer_id 
+  				WHERE client_id=pclient_id 
 				--AND word=noSpace 
 				AND similarity(word, noSpace) > 0.65 
 				ORDER BY similarity(word, noSpace) DESC LIMIT 1;
@@ -41,7 +41,7 @@ CREATE OR REPLACE FUNCTION fnAI_Get_Prompt_Check_Words(pcustomer_id CHAR(36), pp
 					SELECT SPLIT_PART(lowerPrompt, ' ', 2) || SPLIT_PART(lowerPrompt, ' ', 1) INTO noSpace;
 					SELECT COALESCE(word, noSpace) INTO currentTerm
 					FROM menu_search_words
-  					WHERE customer_id=pcustomer_id 
+  					WHERE client_id=pclient_id 
 					--AND word=noSpace LIMIT 1
 					AND similarity(word, noSpace) > 0.65 
 					ORDER BY similarity(word, noSpace) DESC LIMIT 1;
@@ -55,7 +55,7 @@ CREATE OR REPLACE FUNCTION fnAI_Get_Prompt_Check_Words(pcustomer_id CHAR(36), pp
 				IF LENGTH(TRIM(currentTerm)) >= 4 THEN
 					SELECT COALESCE(word, currentTerm) INTO tmpTerm
   					FROM menu_search_words
-  					WHERE customer_id=pcustomer_id AND word % currentTerm
+  					WHERE client_id=pclient_id AND word % currentTerm
   					ORDER BY similarity(word, currentTerm) DESC LIMIT 1;
 
 					--RAISE WARNING 'currentTerm% tmpTerm=%', currentTerm, tmpTerm;

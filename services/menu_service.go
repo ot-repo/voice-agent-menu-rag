@@ -50,6 +50,7 @@ func (s *menuService) CreateMenu(c fiber.Ctx, params *validations.CreateMenuRecu
 		return err
 	}
 
+	client_id := utils.GetClientId(params.CustomerID)
 	// Walk through the directory
 	files, err := os.ReadDir(params.DirPath)
 	if err != nil {
@@ -84,11 +85,11 @@ func (s *menuService) CreateMenu(c fiber.Ctx, params *validations.CreateMenuRecu
 				}
 				i++
 			}
-			s.DB.Exec("INSERT INTO menu_contents(customer_id, file_name, product_name, product_id, product_category, content) VALUES(?, ?, ?, ?, ?, ?);", params.CustomerID, v.Name(), productName, productId, productCategory, string(fileContents))
+			s.DB.Exec("INSERT INTO menu_contents(client_id, file_name, product_name, product_id, product_category, content) VALUES(?, ?, ?, ?, ?, ?);", client_id, v.Name(), productName, productId, productCategory, string(fileContents))
 		}
 	}
 	// Update the words table
-	s.DB.Exec("SELECT * FROM spAI_Save_Menu_Content_Words(?);", params.CustomerID)
+	s.DB.Exec("SELECT * FROM spAI_Save_Menu_Content_Words(?);", client_id)
 	// err = utils.PublishNatsMessage(configs.NatsCustomerMenuPrefix+"."+params.CustomerID, "GenerateAllCustomerContentVectors")
 	// if err != nil {
 	// 	log.Errorf("Cannnot publish to the subject: %s", configs.NatsCustomerMenuPrefix+"."+params.CustomerID)
@@ -103,8 +104,8 @@ func (s *menuService) TaskMenu(c fiber.Ctx, params *validations.TaskMenu) (strin
 	if err := s.Validate.Struct(params); err != nil {
 		return "", err
 	}
-
-	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Task('%s','%s')", params.CustomerID, params.Task)
+	client_id := utils.GetClientId(params.CustomerID)
+	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Task(%d,'%s')", client_id, params.Task)
 	s.DB.Raw(sqlQuery).Scan(&result)
 
 	if result.Code == 0 {
@@ -119,7 +120,8 @@ func (s *menuService) SearchMenu(c fiber.Ctx, params *validations.SearchMenu) (s
 	if err := s.Validate.Struct(params); err != nil {
 		return "", err
 	}
-	return utils.QueryCorpus(s.DB, params.CustomerID, params.Prompt, "API"), nil
+	client_id := utils.GetClientId(params.CustomerID)
+	return utils.QueryCorpus(s.DB, client_id, params.Prompt, "API"), nil
 }
 
 func (s *menuService) EnrichMenu(c fiber.Ctx, params *validations.EnrichMenu) (string, error) {
@@ -128,8 +130,8 @@ func (s *menuService) EnrichMenu(c fiber.Ctx, params *validations.EnrichMenu) (s
 	if err := s.Validate.Struct(params); err != nil {
 		return "", err
 	}
-
-	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Enrichment('%s','%s','%s')", params.CustomerID, params.Type, params.Group)
+	client_id := utils.GetClientId(params.CustomerID)
+	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Enrichment(%d,'%s','%s')", client_id, params.Type, params.Group)
 	log.Info(sqlQuery)
 	s.DB.Raw(sqlQuery).Scan(&result)
 	log.Infof("%+v", result)

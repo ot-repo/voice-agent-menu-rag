@@ -2,8 +2,8 @@
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS menu_prompts
 (
-    id SERIAL PRIMARY KEY,
-    customer_id CHAR(36) NOT NULL REFERENCES clients(customer_id) ON DELETE CASCADE,
+    id INT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    client_id INT NOT NULL REFERENCES clients(id),
     embeddings BOOLEAN NOT NULL DEFAULT false,
     original_prompt VARCHAR NOT NULL,
     modified_prompt VARCHAR NOT NULL,

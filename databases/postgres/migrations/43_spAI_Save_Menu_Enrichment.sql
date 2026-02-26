@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION spAI_Save_Menu_Enrichment(pcustomer_id CHAR(36), ptype VARCHAR, pgroup VARCHAR) RETURNS SETOF tpRecordSaveResult AS $PROC$
+CREATE OR REPLACE FUNCTION spAI_Save_Menu_Enrichment(pclient_id INT, ptype VARCHAR, pgroup VARCHAR) RETURNS SETOF tpRecordSaveResult AS $PROC$
 	DECLARE
 		datarow tpRecordMenuEnrichment;
 		result tpRecordSaveResult;
@@ -13,7 +13,7 @@ CREATE OR REPLACE FUNCTION spAI_Save_Menu_Enrichment(pcustomer_id CHAR(36), ptyp
 		lcategoryId INTEGER;
 
 	BEGIN
-		IF NOT EXISTS(SELECT id FROM clients WHERE customer_id=pcustomer_id AND deleted_at IS NULL) THEN
+		IF NOT EXISTS(SELECT id FROM clients WHERE id=pclient_id AND deleted_at IS NULL) THEN
 			SELECT 10, 'Invalid client supplied.' INTO result;
 			RETURN NEXT result;
 		ELSE
@@ -31,17 +31,17 @@ CREATE OR REPLACE FUNCTION spAI_Save_Menu_Enrichment(pcustomer_id CHAR(36), ptyp
 			IF pgroup = 'common' THEN
 				lgroup := '0';
 			ELSIF pgroup = 'self' THEN
-				lgroup := pcustomer_id;
+				lgroup := lclient_id;
 			ELSIF pgroup = 'all' THEN
-				lgroup := '0,' || pcustomer_id;
+				lgroup := '0,' || lclient_id;
 			ELSE
 				SELECT 30, 'Invalid group supplied.' INTO result;
 				RETURN NEXT result;
 			END IF;
 			
-			FOR datarow IN EXECUTE ('SELECT item, type, synonyms FROM menu_enrichments WHERE customer_id IN (''' || lgroup || ''') AND type IN (' || ltype || ') AND synonyms IS NOT NULL AND deleted_at IS NULL') LOOP
+			FOR datarow IN EXECUTE ('SELECT item, type, synonyms FROM menu_enrichments WHERE client_id IN (''' || lgroup || ''') AND type IN (' || ltype || ') AND synonyms IS NOT NULL AND deleted_at IS NULL') LOOP
 				IF datarow.type = 2 THEN
-					SELECT category_id, COALESCE(label, '') INTO lcategoryId, llabels FROM menu_categories WHERE customer_id=pcustomer_id AND name=datarow.item AND deleted_at IS NULL;
+					SELECT category_id, COALESCE(label, '') INTO lcategoryId, llabels FROM menu_categories WHERE client_id=lclient_id AND name=datarow.item AND deleted_at IS NULL;
 					IF llabels = '' THEN
 						UPDATE menu_categories SET label = datarow.synonyms WHERE category_id=lcategoryId;
 					ELSE
@@ -56,9 +56,10 @@ CREATE OR REPLACE FUNCTION spAI_Save_Menu_Enrichment(pcustomer_id CHAR(36), ptyp
 					END IF;
 				ELSE
 					RAISE WARNING 'item: %', datarow.item;
-					SELECT content.id, COALESCE(content.label, '') INTO lproductId, llabels FROM menu_contents AS content
-					INNER JOIN menu_categories as category ON (content.category_id=category.category_id) 
-					WHERE category.customer_id=pcustomer_id AND content.name=datarow.item AND content.deleted_at IS NULL AND category.deleted_at IS NULL;
+					SELECT content.id, COALESCE(content.label, '') INTO lproductId, llabels 
+					FROM menu_contents AS co
+					INNER JOIN menu_categories AS ca ON (co.category_id=ca.category_id) 
+					WHERE ca.client_id=lclient_id AND co.name=datarow.item AND co.deleted_at IS NULL AND ca.deleted_at IS NULL;
 
 					IF llabels = '' THEN
 						UPDATE menu_contents SET label = datarow.synonyms WHERE id=lproductId;

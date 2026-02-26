@@ -8,10 +8,10 @@ import (
 )
 
 type BaseModel struct {
-	ID        int `gorm:"primaryKey"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	DeletedAt gorm.DeletedAt
+	ID        int            `gorm:"primaryKey"`
+	CreatedAt time.Time      `gorm:"not null" json:"created_at"`
+	UpdatedAt time.Time      `gorm:"not null" json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"null" json:"deleted_at"`
 }
 
 type MenuContentX struct {
@@ -82,22 +82,28 @@ type SaveResult struct {
 }
 
 type MenuTask struct {
-	BaseModel
-	CustomerID string `gorm:"not null" json:"customer_id"`
-	Task       string `gorm:"not null" json:"task"`
-	Status     int    `gorm:"not null, default:0" json:"status"` // 0: pending, 1: running, 2: completed, 3: error
-	Message    string `gorm:"null" json:"message"`
+	//BaseModel
+	ID       int    `gorm:"primaryKey;column:id" json:"id"`
+	ClientID int    `gorm:"column:client_id;not null" json:"client_id"`
+	Task     string `gorm:"column:task;not null" json:"task"`
+	Status   int    `gorm:"column:status;not null, default:0" json:"status"` // 0: pending, 1: running, 2: completed, 3: error, 4: cancel
+	Message  string `gorm:"column:message;null" json:"message"`
 }
 
 type MenuContent struct {
 	BaseModel
-	CustomerID      string         `gorm:"not null" json:"customer_id"`
+	ClientID        int            `gorm:"not null" json:"client_id"`
 	FileName        string         `gorm:"not null" json:"file_name"`
 	ProductName     string         `gorm:"not null" json:"product_name"`
 	ProductID       string         `gorm:"not null" json:"product_id"`
 	ProductCategory string         `gorm:"not null" json:"product_category"`
 	Content         string         `gorm:"not null" json:"content"`
 	ContentVector   sql.NullString `gorm:"null" json:"content_vector"`
+}
+
+type Client struct {
+	ID         int    `gorm:"not null" json:"id"`
+	CustomerID string `gorm:"not null" json:"customer_id"`
 }
 
 type TEIEmbeddingRequest struct {

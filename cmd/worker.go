@@ -14,8 +14,14 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3/log"
+	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 )
+
+func init() {
+	// Set the default timezone to UTC for the entire application
+	//time.Local = time.UTC
+}
 
 func main() {
 	log.Info("Worker started.......")
@@ -24,6 +30,12 @@ func main() {
 
 	db := setupWorkerDatabase()
 	defer closeWorkerDatabase(db)
+
+	//Register the cronjob to get the clients every minute
+	getClients(db)
+	c := cron.New()
+	c.AddFunc("@every 1m", func() { getClients(db) })
+	c.Start()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -41,6 +53,11 @@ func main() {
 	// Wait for all spawned goroutines to finish
 	worker.wg.Wait()
 	log.Infof("All tasks completed. Worker stopped.")
+}
+
+func getClients(db *gorm.DB) {
+	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Get_Clients()")
+	db.Raw(sqlQuery).Scan(&utils.RagClients)
 }
 
 type Worker struct {
@@ -64,11 +81,18 @@ func (w *Worker) run(db *gorm.DB, ctx context.Context) {
 			log.Info("Worker loop stopped.")
 			return
 		case <-ticker.C:
+			sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Get_Menu_Tasks(%d)", configs.TaskPending)
+			log.Info(sqlQuery)
 			pendingTasks := []models.MenuTask{}
-			condition := fmt.Sprintf(`EXTRACT(EPOCH FROM(CURRENT_TIMESTAMP-created_at)) > 30 AND status=%d`, configs.TaskPending)
-			db.Debug().Find(&pendingTasks, condition)
+			result := db.Raw(sqlQuery).Scan(&pendingTasks)
+			// Check for errors
+			if result.Error != nil {
+				log.Errorf("Database query failed: %v", result.Error)
+			}
 
-			log.Infof("pending tasks=%+v", pendingTasks)
+			log.Infof("Rows affected: %d", result.RowsAffected)
+			log.Infof("pendingTasks=%+v", pendingTasks)
+
 			for _, task := range pendingTasks {
 				if task.Task == "import" {
 					w.wg.Add(1)
@@ -85,33 +109,34 @@ func (w *Worker) run(db *gorm.DB, ctx context.Context) {
 func (w *Worker) importMenu(db *gorm.DB, task models.MenuTask) {
 	defer w.wg.Done() // Decrement counter when function exits
 
-	log.Info("Import menu task started...")
+	var result models.SaveResult
 
-	_, err := utils.DownLoadAndImportMenu(db, task.CustomerID)
+	zipFile := fmt.Sprintf("data/menu_%d.zip", task.ClientID)
+	zipFolder := fmt.Sprintf("data/menu_%d", task.ClientID)
+
+	log.Infof("Import menu task finstartedished for client: %d", task.ClientID)
+
+	_, err := utils.DownLoadAndImportMenu(db, task.ClientID)
 	if err != nil {
-		log.Errorf("Error in downloading and importing menu for customer %s: %s", task.CustomerID, err)
+		log.Errorf("Error in downloading and importing menu for client %d: %s", task.ClientID, err)
 		db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskError, "message": err.Error()})
 	} else {
-		db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskRunning})
+		task.Status = configs.TaskRunning
+		db.Save(&task)
 		// Import the menu content from the directory to the database.
-		err = utils.ImportMenuContentFromDir(db, task.CustomerID, "data/menu_"+task.CustomerID)
+		err = utils.ImportMenuContentFromDir(db, task.ClientID, zipFolder)
 		if err == nil {
 			db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskCompleted})
 			// After successful import, add a task to generate the content vectors for the customer.
-			// If there is an ongoing vector job, cancel it first.
-			db.Debug().Model(models.MenuTask{}).Where("customer_id=? and status=? and task='vectors'", task.CustomerID, configs.TaskRunning).Updates(map[string]interface{}{"status": configs.TaskCanceled})
-			newTask := models.MenuTask{
-				CustomerID: task.CustomerID,
-				Task:       "vectors",
-				Status:     configs.TaskPending,
-			}
-			db.Create(&newTask)
+			sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Task(%d, '%s')", task.ClientID, "vectors")
+			db.Raw(sqlQuery).Scan(&result)
 
-			err = os.Remove("data/menu_" + task.CustomerID + ".zip")
+			err = os.Remove(zipFile)
 			if err != nil {
 				log.Errorf("Error deleting the zip file: %s", err.Error())
 			}
-			err = os.RemoveAll("data/menu_" + task.CustomerID)
+
+			err = os.RemoveAll(zipFolder)
 			if err != nil {
 				log.Errorf("Error deleting the directory: %s", err.Error())
 			}
@@ -120,21 +145,24 @@ func (w *Worker) importMenu(db *gorm.DB, task models.MenuTask) {
 		}
 	}
 
-	log.Info("Import menu task finished.")
+	log.Infof("Import menu task finished for client: %d", task.ClientID)
 }
 
 func (w *Worker) generateVectors(db *gorm.DB, task models.MenuTask) {
 	defer w.wg.Done() // Decrement counter when function exits
 
-	log.Info("Generate vectors task started...")
+	log.Infof("Generate vectors task started for client: %d", task.ClientID)
 
 	db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskRunning})
-	err := utils.GenerateAllCustomerContentVectors(db, task.CustomerID)
+	err := utils.GenerateAllCustomerContentVectors(db, task.ClientID, task.ID)
 	if err != nil {
-		log.Errorf("Error in generating content vectors for customer %s: %s", task.CustomerID, err)
-		db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskError, "message": err.Error()})
+		if err.Error() != "Task canceled." {
+			log.Errorf("Error in generating content vectors for client %d: %s", task.ClientID, err)
+			db.Model(&task).Where("status=?", configs.TaskRunning).Updates(map[string]interface{}{"status": configs.TaskError, "message": err.Error()})
+		}
 	} else {
 		db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskCompleted})
+		log.Infof("Generate vectors task finished for client: %d", task.ClientID)
 	}
 }
 
