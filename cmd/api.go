@@ -47,9 +47,10 @@ func main() {
 	c.AddFunc("@every 1m", func() { getClients(db) })
 	c.Start()
 
-	apiAddress := fmt.Sprintf("%s:%d", configs.AppHost, configs.AppPort)
+	tmpRecreateBM25Indexes(db)
 
 	// Start server and handle graceful shutdown
+	apiAddress := fmt.Sprintf("%s:%d", configs.AppHost, configs.AppPort)
 	serverErrors := make(chan error, 1)
 	go startAPIServer(app, apiAddress, serverErrors)
 	handleAPIGracefulShutdown(ctx, app, serverErrors)
@@ -58,6 +59,17 @@ func main() {
 func getClients(db *gorm.DB) {
 	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Get_Clients()")
 	db.Raw(sqlQuery).Scan(&utils.RagClients)
+}
+
+func tmpRecreateBM25Indexes(db *gorm.DB) {
+	db.Debug().Exec("DROP INDEX IF EXISTS idx_menu_contents_product_name_bm25;")
+	db.Debug().Exec("DROP INDEX IF EXISTS idx_menu_contents_product_id_bm25;")
+	db.Debug().Exec("DROP INDEX IF EXISTS idx_menu_contents_product_category_bm25;")
+
+	db.Debug().Exec("CREATE INDEX IF NOT EXISTS idx_menu_contents_product_name_bm25 ON menu_contents USING bm25(product_name) WITH (text_config='german');")
+	db.Debug().Exec("CREATE INDEX IF NOT EXISTS idx_menu_contents_product_id_bm25 ON menu_contents USING bm25(product_id) WITH (text_config='german');")
+	db.Debug().Exec("CREATE INDEX IF NOT EXISTS idx_menu_contents_product_category_bm25 ON menu_contents USING bm25(product_category) WITH (text_config='german');")
+
 }
 
 func setupAPIFiberApp() *fiber.App {

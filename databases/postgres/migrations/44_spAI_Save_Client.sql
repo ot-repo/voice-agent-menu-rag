@@ -1,39 +1,31 @@
 -- +goose Up
 -- +goose StatementBegin
 
-CREATE OR REPLACE FUNCTION spAI_Save_Client(pcustomer_id CHAR(36), ptitle VARCHAR(255)) RETURNS SETOF tpRecordSaveResult AS $PROC$
+CREATE OR REPLACE FUNCTION spAI_Save_Client(pcustomer_id CHAR(36)) RETURNS SETOF tpRecordSaveResult AS $PROC$
 	DECLARE
 		lclient_id INTEGER;
 		reccount INTEGER;
 		datarow tpRecordSaveResult;
-		contentsPartition VARCHAR;
+		--contentsPartition VARCHAR;
 	
 	BEGIN
 		IF EXISTS(SELECT id FROM clients WHERE customer_id = pcustomer_id AND deleted_at IS NULL) THEN
-			UPDATE admins SET title=ptitle, updated_at=CURRENT_TIMESTAMP WHERE customer_id = pcustomer_id AND deleted_at IS NULL;
-			GET DIAGNOSTICS reccount = ROW_COUNT;
-			IF reccount = 1 THEN
-				SELECT 'Client title has been updated', 0 INTO datarow;
-			ELSE
-				SELECT 'Client title could not be updated', 0 INTO datarow;
-			END IF;
+			SELECT 0, 'Client already saved' INTO datarow;
 		ELSE
-			INSERT INTO clients(customer_id, title) 
-			VALUES(pcustomer_id, ptitle) RETURNING id INTO lclient_id;
+			INSERT INTO clients(customer_id) 
+			VALUES(pcustomer_id) RETURNING id INTO lclient_id;
 			GET DIAGNOSTICS reccount = ROW_COUNT;
 
-			contentsPartition := 'CREATE TABLE menu_contents2_p' || lclient_id || ' PARTITION OF menu_contents2 FOR VALUES IN (' || lclient_id | ')';
-			EXECUTE contentsPartition;
-
-			--Create an import task
-			INSERT INTO menu_tasks(client_id, task, status) VALUES(lclient_id, 'import', 0);
-
 			IF reccount = 1 THEN
-				SELECT 'Client has been created', 0 INTO datarow;
+				SELECT 0, 'Client and an import task have been created' INTO datarow;
+				--Create an import task
+				INSERT INTO menu_tasks(client_id, task, status) VALUES(lclient_id, 'import', 0);
 			ELSE
-				SELECT 'Client could not be created', 0 INTO datarow;
+				SELECT 1, 'Client could not be created' INTO datarow;
 			END IF;
 
+			--contentsPartition := 'CREATE TABLE menu_contents2_p' || lclient_id || ' PARTITION OF menu_contents2 FOR VALUES IN (' || lclient_id | ')';
+			--EXECUTE contentsPartition;
 		END IF;
 		
 		RETURN NEXT datarow;
