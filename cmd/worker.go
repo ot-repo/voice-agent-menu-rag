@@ -128,7 +128,8 @@ func (w *Worker) importMenu(db *gorm.DB, task models.MenuTask) {
 		if err == nil {
 			db.Model(&task).Updates(map[string]interface{}{"status": configs.TaskCompleted})
 			// After successful import, add a task to generate the content vectors for the customer.
-			sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Task(%d, '%s')", task.ClientID, "vectors")
+			customer_id := utils.GetCustomerId(task.ClientID)
+			sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Task('%s', '%s')", customer_id, "vectors")
 			db.Raw(sqlQuery).Scan(&result)
 
 			err = os.Remove(zipFile)

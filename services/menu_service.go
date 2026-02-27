@@ -104,8 +104,7 @@ func (s *menuService) TaskMenu(c fiber.Ctx, params *validations.TaskMenu) (strin
 	if err := s.Validate.Struct(params); err != nil {
 		return "", err
 	}
-	client_id := utils.GetClientId(params.CustomerID)
-	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Task(%d,'%s')", client_id, params.Task)
+	sqlQuery := fmt.Sprintf("SELECT * FROM spAI_Save_Menu_Task('%s','%s')", params.CustomerID, params.Task)
 	s.DB.Raw(sqlQuery).Scan(&result)
 
 	if result.Code == 0 {

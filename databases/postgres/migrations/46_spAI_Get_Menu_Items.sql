@@ -10,6 +10,7 @@ CREATE OR REPLACE FUNCTION spAI_Get_Menu_Items(pclient_id INT, pprompt VARCHAR, 
 		firstSimiliarity NUMERIC(17,16) := 1.0;
 		prevContent VARCHAR;
 		modifiedPrompt VARCHAR;
+		lowerCasePrompt VARCHAR;
 		promptId INTEGER;
 		promptFirstAsk BOOLEAN := false;
 		withEmbeddings BOOLEAN := true;
@@ -30,7 +31,9 @@ CREATE OR REPLACE FUNCTION spAI_Get_Menu_Items(pclient_id INT, pprompt VARCHAR, 
 				promptFirstAsk := true;
 			END IF;
 
-			IF LOWER(pprompt) IN ('all categories and products','alle kategorien und produkte','alle produkte','all products') THEN
+			SELECT LOWER(pprompt) INTO lowerCasePrompt;
+
+			IF lowerCasePrompt IN ('all categories and products','alle kategorien und produkte','alle produkte','all products') THEN
 				SELECT 1, content, '' INTO result
 				FROM menu_contents
 				WHERE client_id=pclient_id AND file_name='categories_products.md' AND deleted_at IS NULL;
@@ -51,8 +54,19 @@ CREATE OR REPLACE FUNCTION spAI_Get_Menu_Items(pclient_id INT, pprompt VARCHAR, 
 					WHERE client_id=pclient_id AND deleted_at IS NULL
 					AND file_name != 'categories_products.md';
 
+					--Apply different weights if prompt matches product name/category
+					UPDATE menu_searches SET total_bm25=(-3 * product_name_bm25 + -10 * product_id_bm25 + -1.2*product_category_bm25)
+					FROM menu_contents 
+					WHERE menu_searches.content_id=menu_contents.id AND prompt_id=promptId AND lowerCasePrompt=LOWER(product_name);
+
+					UPDATE menu_searches SET total_bm25=(-1.2 * product_name_bm25 + -10 * product_id_bm25 + -3*product_category_bm25)
+					FROM menu_contents 
+					WHERE menu_searches.content_id=menu_contents.id AND prompt_id=promptId AND lowerCasePrompt=LOWER(product_category);
+
 					UPDATE menu_searches SET total_bm25=(-1.6 * product_name_bm25 + -10 * product_id_bm25 + -1.2*product_category_bm25)
-					WHERE prompt_id=promptId;
+					FROM menu_contents 
+					WHERE menu_searches.content_id=menu_contents.id AND prompt_id=promptId AND lowerCasePrompt != LOWER(product_name) AND lowerCasePrompt != LOWER(product_category);
+
 
 					UPDATE menu_searches SET similarity=similarity/total_bm25
 					WHERE prompt_id=promptId AND total_bm25 > 0;

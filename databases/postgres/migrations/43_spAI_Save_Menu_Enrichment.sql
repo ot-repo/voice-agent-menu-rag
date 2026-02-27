@@ -29,13 +29,13 @@ CREATE OR REPLACE FUNCTION spAI_Save_Menu_Enrichment(pclient_id INT, ptype VARCH
 			END IF;
 
 			IF pgroup = 'common' THEN
-				lgroup := '0';
+				lgroup := '1';
 			ELSIF pgroup = 'self' THEN
 				lgroup := lclient_id;
 			ELSIF pgroup = 'all' THEN
-				lgroup := '0,' || lclient_id;
+				lgroup := '1,' || lclient_id;
 			ELSE
-				SELECT 30, 'Invalid group supplied.' INTO result;
+				SELECT 40, 'Invalid group supplied.' INTO result;
 				RETURN NEXT result;
 			END IF;
 			
